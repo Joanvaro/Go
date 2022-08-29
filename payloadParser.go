@@ -3,7 +3,7 @@ package main
 import(
     "bytes"
     "fmt"
-    //"reflect"
+    "reflect"
     cbugorji "github.com/ugorji/go/codec"
 )
 
@@ -16,7 +16,7 @@ type Event struct {
 type DataLogger struct {
     Id      uint64
     Time    uint64
-    Value   []uint64
+    Value   []int64
     Coord   [][]uint64
 }
 
@@ -42,7 +42,7 @@ func parsingHeader(header interface{}) (Event){
             Id:     id.(uint64),
         }
         
-        if id == 2048 {
+        if item.Id == 2048 {
             GpsData := []uint64{}
             
             for _, val := range initialValues[3+idx].([]interface{}) {
@@ -51,7 +51,7 @@ func parsingHeader(header interface{}) (Event){
 
             item.Coord = append(item.Coord, GpsData)
         } else {
-            item.Value = append(item.Value, initialValues[3+idx].(uint64))
+            item.Value = append(item.Value, initialValues[3+idx].(int64))
         }
 
         rawEvent.Items = append(rawEvent.Items, item)
@@ -59,28 +59,39 @@ func parsingHeader(header interface{}) (Event){
     return rawEvent
 }
 
-/*func parsingDiff(diff []interface{}, events Event) {
+func parsingDiff(diff []interface{}, events Event) {
 
     for _, sample := range diff {
-
+        fmt.Println(sample)
         sample := sample.([]interface{})
         index := sample[1].(uint64)
 
-        fmt.Println(reflect.TypeOf(sample[2]))
-        events.Items[len(events.Items)-1].Values[index] = append(events.Items[len(events.Items)-1].Values[index], sample[2].(interface{}))
-        
+        if events.Items[index].Id == 2048 {
+            GpsData := []uint64{}
 
+            lastValue := events.Items[index].Coord[len(events.Items[index].Coord) - 1]
+            for idx, val := range sample[2].([]interface{}) {
+                GpsData = append(GpsData, lastValue[idx] + val.(uint64))
+            }
+            events.Items[index].Coord = append(events.Items[index].Coord, GpsData)
+        } else {
+
+            lastValue := events.Items[index].Value[len(events.Items[index].Value) - 1]
+            fmt.Println(lastValue)
+            fmt.Println(reflect.TypeOf(sample[2]))
+            newValue := lastValue + sample[2].(int64)
+            fmt.Println("Hello")
+            events.Items[index].Value = append(events.Items[index].Value, newValue)
+        }
     }
 
     fmt.Println(events)
 
-}*/
+}
 
 func parsingStream(stream interface{}) {
 
     for _, rcrd := range stream.([]interface{}) {
-        //fmt.Println(rcrd)
-        //fmt.Printf("\n")
         var record []interface{}
         record = rcrd.([]interface{})
 
@@ -89,8 +100,8 @@ func parsingStream(stream interface{}) {
         fmt.Println("diff = ", diff)
 
         streamEvents := parsingHeader(header) 
-        //parsingDiff(diff, streamEvents)
-        fmt.Println(streamEvents)
+        parsingDiff(diff, streamEvents)
+        //fmt.Println(streamEvents)
     }
 }
 
