@@ -3,7 +3,7 @@ package main
 import(
     "bytes"
     "fmt"
-    "reflect"
+    //"reflect"
     cbugorji "github.com/ugorji/go/codec"
 )
 
@@ -16,8 +16,35 @@ type Event struct {
 type DataLogger struct {
     Id      uint64
     Time    uint64
-    Value   []int64
-    Coord   [][]uint64
+    Value   []Value
+}
+
+type Value struct {
+    Time    uint64
+    Value   []interface{}
+}
+
+type Logger struct {
+    Vin                     string
+    State                   uint64
+    VehicleID               string
+    DeviceID                string
+    LoggerID                uint64 // change to primitive.ObjectID
+    IntegratorAccountID     string
+    Timestamp               uint64
+    Items                   map[string]LoggerItem
+    Model                   string
+}
+
+type LoggerItem struct {
+    ItemValue       interface{}
+    ItemTime        uint64
+}
+
+var itemIdToString = map[int]string {
+    288:    "VehicleSpeed",
+    1600:   "BatteryLevel",
+    2048:   "GNSS",
 }
 
 func decodeCbor(in []byte) (interface{}, error) { 
@@ -25,6 +52,20 @@ func decodeCbor(in []byte) (interface{}, error) {
     bufferCBOR := bytes.NewBuffer(in)
     err := cbugorji.NewDecoderBytes(bufferCBOR.Bytes(), new(cbugorji.CborHandle)).Decode(&returnedValue)
     return returnedValue, err
+}
+
+func getValue(data interface{}) (int64) {
+    var intValue int64
+
+    switch v := data.(type) {
+    case int64:
+        intValue = v
+    case uint64:
+        diff := v
+        intValue = int64(diff)
+    }
+
+    return intValue
 }
 
 func parsingHeader(header interface{}) (Event){
@@ -40,56 +81,68 @@ func parsingHeader(header interface{}) (Event){
         item := DataLogger {
             Time:   initialValues[2].(uint64),
             Id:     id.(uint64),
+        } 
+
+        initialValue := Value {
+            Time:   initialValues[2].(uint64),
         }
-        
+
         if item.Id == 2048 {
-            GpsData := []uint64{}
+            GpsData := []int64{}
             
             for _, val := range initialValues[3+idx].([]interface{}) {
-                GpsData = append(GpsData, val.(uint64))
+                value := getValue(val)
+                GpsData = append(GpsData, value)
             }
 
-            item.Coord = append(item.Coord, GpsData)
+            initialValue.Value = append(initialValue.Value, GpsData)
         } else {
-            item.Value = append(item.Value, initialValues[3+idx].(int64))
+            newValue := getValue(initialValues[3+idx])
+            initialValue.Value = append(initialValue.Value, newValue)
         }
 
+        item.Value = append(item.Value, initialValue)
         rawEvent.Items = append(rawEvent.Items, item)
     }
     return rawEvent
 }
 
-func parsingDiff(diff []interface{}, events Event) {
+func parsingDiff(diff []interface{}, events Event) (Event){
 
     for _, sample := range diff {
-        fmt.Println(sample)
         sample := sample.([]interface{})
         index := sample[1].(uint64)
+        
+        currentValue := Value{}
 
         if events.Items[index].Id == 2048 {
-            GpsData := []uint64{}
+            GpsData := []int64{}
 
-            lastValue := events.Items[index].Coord[len(events.Items[index].Coord) - 1]
+            lastValue := events.Items[index].Value[len(events.Items[index].Value) - 1]
+
             for idx, val := range sample[2].([]interface{}) {
-                GpsData = append(GpsData, lastValue[idx] + val.(uint64))
+                newValue := lastValue.Value[0].([]int64)[idx] + getValue(val)
+                GpsData = append(GpsData, newValue)
             }
-            events.Items[index].Coord = append(events.Items[index].Coord, GpsData)
+            currentValue.Time = lastValue.Time + sample[0].(uint64)
+            currentValue.Value = append(currentValue.Value, GpsData)
+            events.Items[index].Value = append(events.Items[index].Value, currentValue)
         } else {
 
             lastValue := events.Items[index].Value[len(events.Items[index].Value) - 1]
-            fmt.Println(lastValue)
-            fmt.Println(reflect.TypeOf(sample[2]))
-            newValue := lastValue + sample[2].(int64)
-            fmt.Println("Hello")
-            events.Items[index].Value = append(events.Items[index].Value, newValue)
+            newValue := lastValue.Value[0].(int64) + getValue(sample[2])
+
+            currentValue.Time = lastValue.Time + sample[0].(uint64)
+            currentValue.Value = append(currentValue.Value, newValue)
+            events.Items[index].Value = append(events.Items[index].Value, currentValue)
         }
     }
-
-    fmt.Println(events)
-
+    return events
 }
 
-func parsingStream(stream interface{}) {
+func parsingStream(stream interface{})([]Event) {
+
+    var events []Event
 
     for _, rcrd := range stream.([]interface{}) {
         var record []interface{}
@@ -100,9 +153,37 @@ func parsingStream(stream interface{}) {
         fmt.Println("diff = ", diff)
 
         streamEvents := parsingHeader(header) 
-        parsingDiff(diff, streamEvents)
-        //fmt.Println(streamEvents)
+        event := parsingDiff(diff, streamEvents)
+
+        events = append(events, event)
     }
+
+    return events
+}
+
+func fillingLoggerStruct(events []Event) {
+
+    for _, record := range events {
+    
+        recordStream := Logger {
+            Vin:                    "1FRE4GB67JUKW34DV",
+            State:                  record.State,
+            VehicleID:              "vfg45312",
+            DeviceID:               "1225486",
+            IntegratorAccountID:    "A1548FG",
+            Model:                  "Versa",
+        }
+
+        for _, item := range record.Items {
+            fmt.Println(item)
+            fmt.Println("")
+        }
+
+        fmt.Println("")
+        fmt.Println(recordStream)
+    }
+
+
 }
 
 func main() {
@@ -137,8 +218,6 @@ func main() {
         fmt.Println(err)
     }
 
-    //fmt.Println(decodedCbor)
-
-    parsingStream(decodedCbor)
-
+    events := parsingStream(decodedCbor)
+    fillingLoggerStruct(events)
 }
